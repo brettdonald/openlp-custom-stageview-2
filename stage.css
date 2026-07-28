@@ -1,0 +1,128 @@
+@font-face {
+  font-family: 'Noto Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url(fonts/noto-sans-normal-500.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Noto Sans';
+  font-style: bold;
+  font-weight: 700;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url(fonts/noto-sans-normal-700.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@keyframes blinky {
+  0%, 60%, 100% {opacity: 1;}
+  10%, 50% {opacity: 0.75;}
+}
+:root {
+  --fontsize-lyrics: 4vw;
+  --opacity-transition-duration: 400ms;
+  font-family: 'Noto Sans', sans-serif;    
+  font-size: 3vw;
+}
+html, body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: black;
+  min-height: 100vh;
+  box-sizing: border-box;
+  overflow: hidden;
+  color: white;
+  line-height: 1.2;
+}
+#meta {
+  position: fixed;
+  z-index: 1;
+  left: 0;
+  right: 0;
+  top: 0;
+  padding: 0.5rem 1rem 1rem;
+  background: linear-gradient(0deg,rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 1) 25%);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1em;
+  font-weight: bold;
+  > :first-child {
+    color: #080;
+    display: flex;
+    gap: 0.3rem;
+    overflow: auto;
+    .current {
+      color: #66ff66;
+    }
+  }
+  > :last-child {
+    color: yellow;
+    flex-shrink: 0;
+    font-size: larger;
+    > :nth-child(2) {
+      animation: blinky 2s linear infinite;
+    }
+    display: flex;
+    gap: 2px;
+  }
+}
+#width-test, #content {
+  padding: 2rem 1rem 100vh;
+  font-size: var(--fontsize-lyrics);
+}
+#content {
+  color: #aaa;
+  > * {transition: var(--opacity-transition-duration);}
+  .current {color: white;}
+  .ccli {font-size: 1.2vw;}
+}
+#width-test {
+  position: absolute;
+  color: yellow;
+  z-index: -1;
+  white-space: nowrap;
+  visibility: hidden;
+}
+#status {
+  position: fixed;
+  font-size: 18px;
+  right: 1em;
+  bottom: 1em;
+  cursor: pointer;
+}
+body.images {
+  padding-bottom: 0;
+  #width-test {display: none;}
+  #content-wrap {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  #meta {
+    position: static;
+    padding: 0.5rem 1rem;
+    background: black;
+    flex-shrink: 0;
+  }
+  #content {
+    flex-grow: 1;
+    padding: 0;
+    position: relative;
+  }
+}
+#content img {
+  display: block;
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  background: black;
+  box-sizing: border-box;
+}
