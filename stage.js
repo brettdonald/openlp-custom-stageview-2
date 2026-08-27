@@ -1,5 +1,4 @@
-const openLPHost = '127.0.0.1'                                                        // castle hill church PC = 192.168.35.11
-const openLPRequestPort = '4316'                                                      // port for regular API requests
+const openLPHost = window.location.host.split(':')[0]                                 // extract the host name, truncating any specified port
 const openLPWebSocketPort = '4317'                                                    // port for WebSocket connection/messages
 const openLPFetchTimeout = 1000                                                       // time to wait for OpenLP to respond
 const openLPRetry = 5000                                                              // retry delay after an unsuccessful fetch
@@ -8,12 +7,14 @@ const tags = document.querySelector('#meta > :first-child')
 const clock = document.querySelector('#meta > :last-child')
 const content = document.getElementById('content')
 const status = document.getElementById('status')
+const xref = []
 let itemID = null
 let slideIndex = null
 let openLPWebSocket = null
 
-const rootStyleRule = Array.from(document.styleSheets[0].cssRules).find(r => r.selectorText == ':root')                   // extract values from :root style rule
-const lyricsFontSize = Number(rootStyleRule.styleMap.get('--fontsize-lyrics')[0].match(/\d+(?=vw)/)[0])                   // strip units (vw) and convert to number
+//const rootStyleRule = Array.from(document.styleSheets[0].cssRules).find(r => r.selectorText == ':root')                   // extract values from :root style rule
+//const lyricsFontSize = Number(rootStyleRule.styleMap.get('--fontsize-lyrics')[0].match(/\d+(?=vw)/)[0])                   // strip units (vw) and convert to number
+const lyricsFontSize = 4                                                                                                    // temporary workaround until Firefox adds support for styleMap
 
 // function to replace straight quotes with curly quotes (sourced from https://gist.github.com/karbassi/6216484)
 const curlify = t => {
@@ -23,6 +24,24 @@ const curlify = t => {
     .replace(/(^|[-\u2014/\[(\u2018\s])"/g, "$1\u201c")                               // opening doubles
     .replace(/"/g, "\u201d")                                                          // closing doubles
     .replace(/--/g, "\u2014")                                                         // em-dashes
+}
+
+// function to determine the length of a repeating pattern in an array (sourced from https://share.google/aimode/CQk86NNsgz16XBnMr)
+const findRepeatingPattern = arr => {
+  const len = arr.length
+  for (let patternLen = 1; patternLen <= len / 2; patternLen++) {                     // check every possible pattern length up to half of the array size
+    if (len % patternLen === 0) {                                                     // a pattern length must divide the array length perfectly
+      let isRepeating = true
+      for (let i = patternLen; i < len; i++) {                                        // starting from the second potential pattern ...
+        if (arr[i] !== arr[i % patternLen]) {                                         // .. check if this element is different from its corresponding element in the first potential pattern
+          isRepeating = false                                                         // yes it’s different, so no pattern exists
+          break
+        }
+      }
+      if (isRepeating) return patternLen                                              // no differences were found, so yes, there is a repeating pattern of this length
+    }
+  }
+  return null                                                                         // no repeating pattern was found
 }
 
 // function to manage the display of errors
@@ -80,7 +99,6 @@ const loadImage = async () => {
     const response = await fetch('/api/v2/core/live-image')
     if (response.ok) {
       const data = await response.json()
-      console.log(data)
       content.querySelector('img').src = data.binary_image
     }
     else
@@ -96,16 +114,15 @@ const loadImage = async () => {
 
 const changeSlide = (json, index, fast = false) => {
   tags.querySelector('.current')?.classList.remove('current')
-  tags.children[index]?.classList.add('current')
-  // if slide is a song
-  if (json.name == 'songs') {
+  if (json.name == 'songs') {                                                         // if slide is a song
+    tags.children[xref[index]]?.classList.add('current')
     content.querySelector('.current')?.classList.remove('current')
     content.children[index]?.classList.add('current')
     if (fast) slowScrollTo(content.children[index], 500)
-    else setTimeout(() => {slowScrollTo(content.children[index], 2000)}, 400)
+    else setTimeout(() => {slowScrollTo(content.children[index], 1200)}, 100)
   }
-  else {
-    // else (if slide is an image)
+  else {                                                                              // else (slide is assumed to be an image)
+    tags.children[index]?.classList.add('current')
     content.innerHTML = `<img src="${json.slides[index].img}">`
     loadImage()
   }
@@ -117,6 +134,43 @@ const isCCLI = i => {
 }
 const notCCLI = i => {
   return !isCCLI(i)
+}
+
+// function to calculate verses from slides and tags ... the OpenLP API doesn't contain any verse information, so it has to be calculated in real time by looking for patterns in the lyrics
+const calcTags = slides => {
+  
+  // create a first array with all tags in sequence and work out if there are any patterns in the text 
+  const a1 = []
+  slides.forEach(s => {
+    const last = a1.at(-1)
+    if (last && last.tag == s.tag) last.text.push(s.text)
+    else a1.push({tag: s.tag, text: [s.text]})
+  })
+  a1.forEach(a => a.pattern = findRepeatingPattern(a.text))                           // the return value is the length of the pattern, or null if no pattern was found
+
+  // from this first array, develop an array (a2) of tags for output, and an array (xref) which cross-references slides with tags
+  const a2 = []
+  let tagIndex = 0
+  xref.length = 0
+  a1.forEach(a => {
+    if (a.pattern) {                                                                  // if this tag contains repeats
+      for (i = 0; i < a.text.length / a.pattern; i++) {                               // iterate each repeat
+        for (j = 0; j < a.pattern; j++) {                                             // iterate the slides in this repeat
+          xref.push(tagIndex)                                                         // cross reference this slide ... the index of xref represents the slide index, the value in it represents the tag index
+        }
+        a2.push(a.tag)                                                                // push a tag representing this repeat
+        tagIndex++
+      }
+    }
+    else {                                                                            // this tag has no repeats
+      for (i = 0; i < a.text.length; i++) {                                           // iterate the slides in this tag
+        xref.push(tagIndex)                                                           // cross reference the slide
+      }
+      a2.push(a.tag)
+      tagIndex++
+    }
+  })
+  return a2
 }
 
 // function to retrieve the current item from OpenLP and if it’s a song, render the current lyrics
@@ -153,7 +207,6 @@ const fetchOpenLP = async () => {
     itemID = json.id                                                                  // update
     slideIndex = null                                                                 // reset
 
-    //console.log(json)
     document.body.className = json.name
     
     // if this item is a song
@@ -168,14 +221,13 @@ const fetchOpenLP = async () => {
         fs = fs - 0.1                                                                 // reduce by 0.1vw each time
         widthTest.style.fontSize = fs + 'vw'
       }
-      const a = [], b = []
+      const a = []
       json.slides.forEach(s => {
         a.push(`<p ${isCCLI(s) ? 'class="ccli"' : ''}>${curlify(s.html)}</p>`)
-        b.push(`<span>${s.tag}</span>`)
       })
       content.style.fontSize = widthTest.style.fontSize
       content.innerHTML = a.join('')
-      tags.innerHTML = b.join('')
+      tags.innerHTML = '<span>' + calcTags(json.slides).join('</span><span>') + '</span>'
     }
     else if (json.name == 'images') {
       widthTest.innerHTML = ''
