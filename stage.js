@@ -6,6 +6,7 @@ const widthTest = document.getElementById('width-test')
 const tags = document.querySelector('#meta > :first-child')
 const clock = document.querySelector('#meta > :last-child')
 const content = document.getElementById('content')
+const next = document.getElementById('next')
 const status = document.getElementById('status')
 const xref = []
 let itemID = null
@@ -15,6 +16,16 @@ let openLPWebSocket = null
 //const rootStyleRule = Array.from(document.styleSheets[0].cssRules).find(r => r.selectorText == ':root')                   // extract values from :root style rule
 //const lyricsFontSize = Number(rootStyleRule.styleMap.get('--fontsize-lyrics')[0].match(/\d+(?=vw)/)[0])                   // strip units (vw) and convert to number
 const lyricsFontSize = 4                                                                                                    // temporary workaround until Firefox adds support for styleMap
+
+function debounceLeading(func, delay) {
+  let timeoutId
+  return function (...args) {
+    const callNow = !timeoutId                                                        // check if the timer is NOT currently active
+    clearTimeout(timeoutId)                                                           // clear any existing timer to reset the quiet window
+    timeoutId = setTimeout(() => {timeoutId = null}, delay)                           // set a timer that clears itself after the delay expires
+    if (callNow) func.apply(this, args)                                               // if no timer was active, execute the function immediately
+  }
+}
 
 // function to replace straight quotes with curly quotes (sourced from https://gist.github.com/karbassi/6216484)
 const curlify = t => {
@@ -123,7 +134,7 @@ const changeSlide = (json, index, fast = false) => {
   }
   else {                                                                              // else (slide is assumed to be an image)
     tags.children[index]?.classList.add('current')
-    content.innerHTML = `<img src="${json.slides[index].img}">`
+    content.innerHTML = `<figure class="image-slide"><img src="${json.slides[index].img}"></figure>`
     loadImage()
   }
 }
@@ -178,15 +189,37 @@ const fetchOpenLP = async () => {
 
   // if the websocket connection isn’t open, abort
   if (openLPWebSocket.readyState != WebSocket.OPEN) return
-  
+
   let response = null
-  let json = null
-  
+  let service = null
+  let item = null
+
+  // retrieve entire service from OpenLP ... we probably don't need to fetch this every time something changes, but anyway ...
+  try {
+    response = await fetch(`/api/v2/service/items`, {signal: AbortSignal.timeout(openLPFetchTimeout)})
+    if (response.ok)
+      service = await response.json()
+    else
+      throw new Error(`OpenLP server returned HTTP error ${response.status}`)
+  }
+  catch (e) {
+    let message = ''                                                                  // assemble error message
+    if (e.name == 'AbortError' || e.name == 'TypeError') message = `No response from OpenLP on ${openLPHost}`
+    else message = e.message
+    errorDisplay(message)                                                             // subtly alert the video team that an error occurred
+    setTimeout(fetchOpenLP, openLPRetry)                                              // wait a while then retry
+    return
+  }
+
+  // determine which is the current item, and then find the title of the item following it ... we'll display this at the bottom of the screen
+  const i = service.findIndex(s => s.selected)
+  const nextItemHTML = i < service.length -1 ? '<img src="img/arrow-right.svg"> ' + service[i + 1].title : '<img src="img/cheq-flag.svg"> End of Service'
+
   // retrieve current item from OpenLP
   try {
     response = await fetch(`/api/v2/controller/live-items`, {signal: AbortSignal.timeout(openLPFetchTimeout)})
     if (response.ok)
-      json = await response.json()
+      item = await response.json()
     else
       throw new Error(`OpenLP server returned HTTP error ${response.status}`)
   }
@@ -203,18 +236,19 @@ const fetchOpenLP = async () => {
   errorDisplay(null)
 
   // is this a different item from what we are already displaying?
-  if (json.id != itemID) {
-    itemID = json.id                                                                  // update
+  if (item.id != itemID) {
+    itemID = item.id                                                                  // update
     slideIndex = null                                                                 // reset
 
-    document.body.className = json.name
-    
-    // if this item is a song
-    if (json.name == 'songs') {                                                       // yes, it is a song
+    document.body.className = item.name                                               // set a class for styling
+    next.innerHTML = `${nextItemHTML}`                                                // populate the element which displays the next item
+
+    // populate the content and the tags based on the item type
+    if (item.name == 'songs') {                                                       // it's a song
       content.innerHTML = ''
       window.scrollTo(0, 0)
       widthTest.style.fontSize = null                                                 // reset
-      widthTest.innerHTML = curlify(json.slides.filter(notCCLI).map(o => o.html).join('<br>'))        // render the entire song in a hidden element
+      widthTest.innerHTML = curlify(item.slides.filter(notCCLI).map(o => o.html).join('<br>'))        // render the entire song in a hidden element
       let fs = lyricsFontSize;                                                        // standard size extracted from style rule
       // if the song is wider than the body, reduce the font size until it fits
       while (document.body.clientWidth < widthTest.clientWidth) {
@@ -222,17 +256,17 @@ const fetchOpenLP = async () => {
         widthTest.style.fontSize = fs + 'vw'
       }
       const a = []
-      json.slides.forEach(s => {
+      item.slides.forEach(s => {
         a.push(`<p ${isCCLI(s) ? 'class="ccli"' : ''}>${curlify(s.html)}</p>`)
       })
       content.style.fontSize = widthTest.style.fontSize
-      content.innerHTML = a.join('')
-      tags.innerHTML = '<span>' + calcTags(json.slides).join('</span><span>') + '</span>'
+      content.innerHTML = a.join('')                                                  // populate the element which displays the content
+      tags.innerHTML = '<span>' + calcTags(item.slides).join('</span><span>') + '</span>'   // populate the tags
     }
-    else if (json.name == 'images') {
+    else if (item.name == 'images') {                                                 // it's images
       widthTest.innerHTML = ''
       const b = []
-      json.slides.forEach(s => {
+      item.slides.forEach(s => {
         b.push(`<span>${s.tag}</span>`)
       })
       tags.innerHTML = b.join('')
@@ -241,23 +275,32 @@ const fetchOpenLP = async () => {
       content.style.display = "none"
       setTimeout(() => {content.style.removeProperty('display')}, 50)
     }
-    else {
+    else if (item.name == 'media') {                                                  // it's a video
       widthTest.innerHTML = ''
-      content.innerHTML = ''                                                          // it’s neither a song nor an image, so clear the screen
+      content.innerHTML = `<p class="current">${item.title}</p>`
+      window.scrollTo(0, 0)
+      tags.innerHTML = ''
+    }
+    else {                                                                            // it’s neither a song nor an image, so clear the screen
+      widthTest.innerHTML = ''
+      content.innerHTML = ''
+      next.innerHTML = ''
       tags.innerHTML = ''
     }
   }
 
   // is this is different slide from what we are already displaying?
-  if (json.name == 'songs' || json.name == 'images') {
-    const fetchedIndex = json.slides.findIndex(o => o.selected)
+  if (item.name == 'songs' || item.name == 'images') {
+    const fetchedIndex = item.slides.findIndex(o => o.selected)
     if (fetchedIndex != slideIndex) {
       const reverse = slideIndex == null || fetchedIndex < slideIndex
       slideIndex = fetchedIndex
-      changeSlide(json, fetchedIndex, reverse)
+      changeSlide(item, fetchedIndex, reverse)
     }
   }
 }
+
+const processMessage = debounceLeading(fetchOpenLP, 100)                              // when switching songs, two messages arrive in rapid succession, so debounce fetching the current state from OpenLP
 
 /***** WebSockets documentation *****
 OpenLP: https://gitlab.com/openlp/wiki/-/wikis/Documentation/websockets
@@ -275,7 +318,7 @@ const connectOpenLP = () => {
     setTimeout(connectOpenLP, openLPRetry)
   }
   openLPWebSocket.onmessage = evt => {
-    fetchOpenLP()                                                                     // fetch the current state from OpenLP. We ignore the message contents; the arrival of the message is simply a trigger. Should the message contents be needed in future, the OpenLP documentation (link above) contains a code sample.
+    processMessage()                                                                  // we ignore the message contents; the arrival of the message is simply a trigger. Should the message contents be needed in future, the OpenLP documentation (link above) contains a code sample.
   }
 }
 
